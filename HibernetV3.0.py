@@ -682,7 +682,16 @@ async def WorkerTask(counter, semaphore):
 	# Fallback headers for extra randomness (optional, impersonate handles most)
 	randomip = f"{random.randint(0,255)}.{random.randint(0,255)}.{random.randint(0,255)}.{random.randint(0,255)}"
 	extra_headers = {
+		"User-Agent": f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.3{random.randint(0, 9)}",
 		"X-Forwarded-For": randomip,
+		"Accept-Language": "en-US,en;q=0.9",
+		"Sec-Ch-Ua": "\"Not)A;Brand\";v=\"24\", \"Chromium\";v=\"116\"",
+		"Sec-Ch-Ua-Mobile": "?0",
+		"Sec-Ch-Ua-Platform": "\"Windows\"",
+		"Sec-Fetch-Dest": "document",
+		"Sec-Fetch-Mode": "navigate",
+		"Sec-Fetch-Site": "none",
+		"Sec-Fetch-User": "?1",
 		"Cache-Control": "no-cache, no-store, must-revalidate", # Cache-busting
 		"Pragma": "no-cache"
 	}
