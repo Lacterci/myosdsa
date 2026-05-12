@@ -20,12 +20,18 @@ flaresolverr_process = None
 def start_local_flaresolverr():
 	global flaresolverr_process
 	base_dir = os.path.dirname(os.path.abspath(__file__))
-	fs_script = os.path.join(base_dir, "FlareSolverr", "src", "flaresolverr.py")
+	fs_dir = os.path.join(base_dir, "FlareSolverr")
+	fs_script = os.path.join(fs_dir, "src", "flaresolverr.py")
+	
+	if not os.path.exists(fs_script):
+		logging.info("[SYSTEM] FlareSolverr not found on this server. Automatically downloading it right now...")
+		subprocess.run(["git", "clone", "https://github.com/FlareSolverr/FlareSolverr.git", fs_dir], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+		
 	if os.path.exists(fs_script):
-		logging.info("[SYSTEM] Auto-Starting built-in FlareSolverr in the background... Please wait 5-10 seconds.")
+		logging.info("[SYSTEM] Auto-Starting built-in FlareSolverr in the background... Please wait 15-20 seconds to warm up.")
 		try:
 			# Auto-install requirements just in case
-			req_path = os.path.join(base_dir, "FlareSolverr", "requirements.txt")
+			req_path = os.path.join(fs_dir, "requirements.txt")
 			subprocess.run([sys.executable, "-m", "pip", "install", "-r", req_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 			
 			flaresolverr_process = subprocess.Popen(
@@ -34,11 +40,11 @@ def start_local_flaresolverr():
 				stderr=subprocess.DEVNULL,
 				env=dict(os.environ, LOG_LEVEL="info")
 			)
-			time.sleep(7) # Let the server spin up
+			time.sleep(15) # Let the server spin up completely (installing browser binaries might take time on first run)
 		except Exception as e:
 			logging.error(f"[SYSTEM] Failed to start background FlareSolverr: {e}")
 	else:
-		logging.warning("[SYSTEM] FlareSolverr folder not found! Cloudflare Bypass may fail.")
+		logging.warning("[SYSTEM] Failed to automatically download FlareSolverr! Cloudflare Bypass may fail.")
 
 def cleanup_flaresolverr():
 	if flaresolverr_process:
