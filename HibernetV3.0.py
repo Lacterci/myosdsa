@@ -43,8 +43,9 @@ def start_local_flaresolverr():
 					env=dict(os.environ, LOG_LEVEL="info", HOST="127.0.0.1", PORT="8191")
 				)
 				time.sleep(20) # Let the server spin up completely (installing browser binaries might take time on first run)
-			logging.error(f"[SYSTEM] Failed to start background FlareSolverr: {e}")
-	else:
+			except Exception as e:
+				logging.error(f"[SYSTEM] Failed to start background FlareSolverr: {e}")
+		else:
 		logging.warning("[SYSTEM] Failed to automatically download FlareSolverr! Cloudflare Bypass may fail.")
 
 def cleanup_flaresolverr():
