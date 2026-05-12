@@ -30,12 +30,20 @@ def start_local_flaresolverr():
 	if os.path.exists(fs_script):
 		logging.info("[SYSTEM] Auto-Starting built-in FlareSolverr in the background... Please wait 20-30 seconds to warm up.")
 		try:
-			# Auto-install requirements just in case
-			req_path = os.path.join(fs_dir, "requirements.txt")
-			subprocess.run([sys.executable, "-m", "pip", "install", "-r", req_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-			
 			# Log errors to file instead of hiding them
 			fs_log = open(os.path.join(base_dir, "flaresolverr_bg.log"), "w")
+			
+			# Auto-install requirements just in case
+			req_path = os.path.join(fs_dir, "requirements.txt")
+			fs_log.write("--- Installing Dependencies ---\n")
+			fs_log.flush()
+			
+			# Try standard pip install
+			result = subprocess.run([sys.executable, "-m", "pip", "install", "-r", req_path], stdout=fs_log, stderr=fs_log)
+			# If it failed (often due to PEP 668 externally-managed-env on Ubuntu), try with --break-system-packages
+			if result.returncode != 0:
+				subprocess.run([sys.executable, "-m", "pip", "install", "-r", req_path, "--break-system-packages"], stdout=fs_log, stderr=fs_log)
+			
 			flaresolverr_process = subprocess.Popen(
 				[sys.executable, fs_script], 
 				stdout=fs_log, 
