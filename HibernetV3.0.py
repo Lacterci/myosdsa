@@ -28,24 +28,24 @@ def start_local_flaresolverr():
 		subprocess.run(["git", "clone", "https://github.com/FlareSolverr/FlareSolverr.git", fs_dir], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 		
 	if os.path.exists(fs_script):
-			logging.info("[SYSTEM] Auto-Starting built-in FlareSolverr in the background... Please wait 20-30 seconds to warm up.")
-			try:
-				# Auto-install requirements just in case
-				req_path = os.path.join(fs_dir, "requirements.txt")
-				subprocess.run([sys.executable, "-m", "pip", "install", "-r", req_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-				
-				# Log errors to file instead of hiding them
-				fs_log = open(os.path.join(base_dir, "flaresolverr_bg.log"), "w")
-				flaresolverr_process = subprocess.Popen(
-					[sys.executable, fs_script], 
-					stdout=fs_log, 
-					stderr=fs_log,
-					env=dict(os.environ, LOG_LEVEL="info", HOST="127.0.0.1", PORT="8191")
-				)
-				time.sleep(20) # Let the server spin up completely (installing browser binaries might take time on first run)
-			except Exception as e:
-				logging.error(f"[SYSTEM] Failed to start background FlareSolverr: {e}")
-		else:
+		logging.info("[SYSTEM] Auto-Starting built-in FlareSolverr in the background... Please wait 20-30 seconds to warm up.")
+		try:
+			# Auto-install requirements just in case
+			req_path = os.path.join(fs_dir, "requirements.txt")
+			subprocess.run([sys.executable, "-m", "pip", "install", "-r", req_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+			
+			# Log errors to file instead of hiding them
+			fs_log = open(os.path.join(base_dir, "flaresolverr_bg.log"), "w")
+			flaresolverr_process = subprocess.Popen(
+				[sys.executable, fs_script], 
+				stdout=fs_log, 
+				stderr=fs_log,
+				env=dict(os.environ, LOG_LEVEL="info", HOST="127.0.0.1", PORT="8191")
+			)
+			time.sleep(20) # Let the server spin up completely (installing browser binaries might take time on first run)
+		except Exception as e:
+			logging.error(f"[SYSTEM] Failed to start background FlareSolverr: {e}")
+	else:
 		logging.warning("[SYSTEM] Failed to automatically download FlareSolverr! Cloudflare Bypass may fail.")
 
 def cleanup_flaresolverr():
