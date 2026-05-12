@@ -7,10 +7,44 @@ import urllib.request
 import os
 import sys
 import json
+import subprocess
+import time
+import atexit
 
 # Global variables for FlareSolverr bypass
 global_cf_cookies = {}
 global_cf_ua = None
+
+flaresolverr_process = None
+
+def start_local_flaresolverr():
+	global flaresolverr_process
+	base_dir = os.path.dirname(os.path.abspath(__file__))
+	fs_script = os.path.join(base_dir, "FlareSolverr", "src", "flaresolverr.py")
+	if os.path.exists(fs_script):
+		logging.info("[SYSTEM] Auto-Starting built-in FlareSolverr in the background... Please wait 5-10 seconds.")
+		try:
+			# Auto-install requirements just in case
+			req_path = os.path.join(base_dir, "FlareSolverr", "requirements.txt")
+			subprocess.run([sys.executable, "-m", "pip", "install", "-r", req_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+			
+			flaresolverr_process = subprocess.Popen(
+				[sys.executable, fs_script], 
+				stdout=subprocess.DEVNULL, 
+				stderr=subprocess.DEVNULL,
+				env=dict(os.environ, LOG_LEVEL="info")
+			)
+			time.sleep(7) # Let the server spin up
+		except Exception as e:
+			logging.error(f"[SYSTEM] Failed to start background FlareSolverr: {e}")
+	else:
+		logging.warning("[SYSTEM] FlareSolverr folder not found! Cloudflare Bypass may fail.")
+
+def cleanup_flaresolverr():
+	if flaresolverr_process:
+		flaresolverr_process.terminate()
+
+atexit.register(cleanup_flaresolverr)
 
 
 print('''
@@ -635,6 +669,8 @@ def loop():
 	connection = "Connection: Keep-Alive\r\n" # la keep alive torna sempre utile lol
 	
 	try:
+		start_local_flaresolverr()
+		
 		# Use WindowsSelectorEventLoopPolicy as it handles sockets better under load in some Windows setups
 		if sys.platform == 'win32':
 			asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
