@@ -28,20 +28,21 @@ def start_local_flaresolverr():
 		subprocess.run(["git", "clone", "https://github.com/FlareSolverr/FlareSolverr.git", fs_dir], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 		
 	if os.path.exists(fs_script):
-		logging.info("[SYSTEM] Auto-Starting built-in FlareSolverr in the background... Please wait 15-20 seconds to warm up.")
-		try:
-			# Auto-install requirements just in case
-			req_path = os.path.join(fs_dir, "requirements.txt")
-			subprocess.run([sys.executable, "-m", "pip", "install", "-r", req_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-			
-			flaresolverr_process = subprocess.Popen(
-				[sys.executable, fs_script], 
-				stdout=subprocess.DEVNULL, 
-				stderr=subprocess.DEVNULL,
-				env=dict(os.environ, LOG_LEVEL="info")
-			)
-			time.sleep(15) # Let the server spin up completely (installing browser binaries might take time on first run)
-		except Exception as e:
+			logging.info("[SYSTEM] Auto-Starting built-in FlareSolverr in the background... Please wait 20-30 seconds to warm up.")
+			try:
+				# Auto-install requirements just in case
+				req_path = os.path.join(fs_dir, "requirements.txt")
+				subprocess.run([sys.executable, "-m", "pip", "install", "-r", req_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+				
+				# Log errors to file instead of hiding them
+				fs_log = open(os.path.join(base_dir, "flaresolverr_bg.log"), "w")
+				flaresolverr_process = subprocess.Popen(
+					[sys.executable, fs_script], 
+					stdout=fs_log, 
+					stderr=fs_log,
+					env=dict(os.environ, LOG_LEVEL="info", HOST="127.0.0.1", PORT="8191")
+				)
+				time.sleep(20) # Let the server spin up completely (installing browser binaries might take time on first run)
 			logging.error(f"[SYSTEM] Failed to start background FlareSolverr: {e}")
 	else:
 		logging.warning("[SYSTEM] Failed to automatically download FlareSolverr! Cloudflare Bypass may fail.")
@@ -710,7 +711,7 @@ async def check_waf(target_url):
 				
 			# FlareSolverr CF Bypass Integration
 			if "cloudflare" in server_lower or "ddos-guard" in server_lower or response.status_code in [403, 503]:
-				logging.info("[FLARESOLVERR] Attempting to bypass JS Challenge via FlareSolverr (localhost:8191)...")
+				logging.info("[FLARESOLVERR] Attempting to bypass JS Challenge via FlareSolverr (127.0.0.1:8191)...")
 				try:
 					payload = {
 						"cmd": "request.get",
@@ -718,7 +719,7 @@ async def check_waf(target_url):
 						"maxTimeout": 60000
 					}
 					async with AsyncSession() as fs_session:
-						fs_resp = await fs_session.post("http://localhost:8191/v1", json=payload, timeout=65.0)
+						fs_resp = await fs_session.post("http://127.0.0.1:8191/v1", json=payload, timeout=65.0)
 						fs_data = fs_resp.json()
 						if fs_data.get("status") == "ok":
 							global global_cf_ua
